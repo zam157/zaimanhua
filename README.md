@@ -177,6 +177,7 @@ iOS / iPadOS 版通过 TestFlight 提供，安装方式见[上方说明](#ios--i
 
 ## 开发
 
+- AI 与维护者接手入口见 [AGENTS.md](AGENTS.md) 和 [开发与维护指南](docs/MAINTAINERS.md)。
 - 开发原则：安卓优先，功能在安卓落地后再同步验证 Windows 版
 - Flutter 3.47.2（本机与 CI 版本需一致）
 - Windows 本机开发请使用纯 ASCII 路径：项目放在含中文的目录时，原生构建会读坏文件，`flutter analyze` 也会因 LSP 消息长度计算错误而抛出 `FormatException`。做法是建一个 junction，再从那里操作：
