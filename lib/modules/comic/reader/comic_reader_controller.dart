@@ -86,7 +86,6 @@ class ComicReaderController extends BaseController {
   StreamSubscription<BatteryState>? batterySubscription;
 
   /// 当处于放大图片时，锁定滑动手势
-  var lockSwipe = false.obs;
 
   /// 当前章节索引
   var chapterIndex = 0.obs;
@@ -599,13 +598,13 @@ class ComicReaderController extends BaseController {
   }
 
   /// 下一页
-  void nextPage() {
+  void nextPage({bool anime = true}) {
     if (isDualPaging) {
       var group = currentGroupIndex;
       if (group >= pageGroups.length - 1) {
         nextChapter();
       } else {
-        jumpToGroup(group + 1, anime: true);
+        jumpToGroup(group + 1, anime: anime);
       }
       return;
     }
@@ -615,18 +614,18 @@ class ComicReaderController extends BaseController {
     if (value >= max - 1) {
       nextChapter();
     } else {
-      jumpToPage(value + 1, anime: true);
+      jumpToPage(value + 1, anime: anime);
     }
   }
 
   /// 上一页
-  void forwardPage() {
+  void forwardPage({bool anime = true}) {
     if (isDualPaging) {
       var group = currentGroupIndex;
       if (group <= 0) {
         forwardChapter(toLastPage: true);
       } else {
-        jumpToGroup(group - 1, anime: true);
+        jumpToGroup(group - 1, anime: anime);
       }
       return;
     }
@@ -635,7 +634,7 @@ class ComicReaderController extends BaseController {
     if (value == 0) {
       forwardChapter(toLastPage: true);
     } else {
-      jumpToPage(value - 1, anime: true);
+      jumpToPage(value - 1, anime: anime);
     }
   }
 

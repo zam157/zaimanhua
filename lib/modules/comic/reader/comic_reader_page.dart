@@ -9,7 +9,8 @@ import 'package:zai_x/app/app_constant.dart';
 import 'package:zai_x/app/app_style.dart';
 import 'package:zai_x/app/log.dart';
 import 'package:zai_x/modules/comic/reader/comic_reader_controller.dart';
-import 'package:zai_x/services/app_settings_service.dart';
+import 'package:zai_x/modules/comic/reader/comic_reader_viewport.dart';
+import 'package:zai_x/modules/comic/reader/comic_strip_viewport.dart';
 import 'package:zai_x/widgets/custom_header.dart';
 import 'package:zai_x/widgets/chapter_swipe_boundary.dart';
 import 'package:zai_x/widgets/local_image.dart';
@@ -17,7 +18,6 @@ import 'package:zai_x/widgets/net_image.dart';
 import 'package:zai_x/widgets/status/app_error_widget.dart';
 import 'package:zai_x/widgets/status/app_loadding_widget.dart';
 import 'package:get/get.dart';
-import 'package:photo_view/photo_view.dart';
 import 'package:preload_page_view/preload_page_view.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
@@ -58,66 +58,7 @@ class ComicReaderPage extends GetView<ComicReaderController> {
           resizeToAvoidBottomInset: false,
           body: _readerBody(Stack(
             children: [
-              Obx(
-                () => Offstage(
-                  offstage: controller.detail.value.chapterId == 0,
-                  child: GestureDetector(
-                    onTap: () {
-                      controller.setShowControls();
-                    },
-                    child:
-                        controller.direction.value == ReaderDirection.kUpToDown
-                            ? buildVertical()
-                            : buildHorizontal(),
-                  ),
-                ),
-              ),
-              Positioned.fill(
-                child: Obx(() {
-                  final zone =
-                      AppSettingsService.instance.comicReaderTapZone.value;
-                  return Row(
-                    children: [
-                      Expanded(
-                        flex: zone,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onTap: () {
-                            controller.leftHandMode
-                                ? controller.nextPage()
-                                : controller.forwardPage();
-                          },
-                          child: Container(
-                            width: double.infinity,
-                            height: double.infinity,
-                            color: Colors.transparent,
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 100 - zone * 2,
-                        child: Container(),
-                      ),
-                      Expanded(
-                        flex: zone,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onTap: () {
-                            controller.leftHandMode
-                                ? controller.forwardPage()
-                                : controller.nextPage();
-                          },
-                          child: Container(
-                            width: double.infinity,
-                            height: double.infinity,
-                            color: Colors.transparent,
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                }),
-              ),
+              buildReadingArea(context),
               Obx(
                 () => Visibility(
                   visible: controller.pageLoadding.value,
@@ -310,15 +251,101 @@ class ComicReaderPage extends GetView<ComicReaderController> {
     );
   }
 
-  Widget buildHorizontal() {
+  Widget buildReadingArea(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return Obx(() {
+      final detail = controller.detail.value;
+      final direction = controller.direction.value;
+      final vertical = direction == ReaderDirection.kUpToDown;
+      final ready = detail.chapterId != 0 &&
+          !controller.pageLoadding.value &&
+          !controller.pageError.value;
+      final animateZoom = !controller.settings.eInkMode.value;
+      final zone = controller.settings.comicReaderTapZone.value / 100;
+      void onTap(double x) {
+        if (x < zone) {
+          controller.forwardPageByInput();
+        } else if (x > 1 - zone) {
+          controller.nextPageByInput();
+        } else {
+          controller.setShowControls();
+        }
+      }
+
+      if (vertical) {
+        return Offstage(
+          offstage: detail.chapterId == 0,
+          child: ComicStripViewport(
+            zoomEnabled: ready,
+            animateZoom: animateZoom,
+            onTap: onTap,
+            builder: (_, scrollLocked) => Obx(() => buildVertical(scrollLocked)),
+          ),
+        );
+      }
+
+      final index = controller.currentIndex.value;
+      final reverse = direction == ReaderDirection.kRightToLeft;
+      final dual = controller.isDualPaging;
+      final groups = controller.pageGroups.toList();
+      final page = dual ? controller.currentGroupIndex : index;
+      final pageCount = dual ? groups.length : detail.pageUrls.length;
+      final chapter = controller.chapterIndex.value;
+      return Offstage(
+        offstage: detail.chapterId == 0,
+        child: ComicReaderViewport(
+          zoomEnabled: ready &&
+              index >= 0 &&
+              index < detail.pageUrls.length &&
+              detail.pageUrls[index] != 'TC',
+          resetToken: (
+            direction,
+            dual,
+            controller.coverAlone,
+            size,
+          ),
+          pageKey: (
+            detail.chapterId,
+            dual && page < groups.length ? groups[page].first : index,
+          ),
+          animateZoom: animateZoom,
+          reverse: reverse,
+          onPreviousPage: page > 0 || chapter > 0
+              ? () => controller.forwardPage(anime: false)
+              : null,
+          onNextPage: page < pageCount - 1 ||
+                  chapter < controller.chapters.length - 1
+              ? () => controller.nextPage(anime: false)
+              : null,
+          previewBuilder: (next) {
+            final adjacent = page + (next ? 1 : -1);
+            if (adjacent < 0 || adjacent >= pageCount) return null;
+            final pages = dual ? groups[adjacent] : [adjacent];
+            final first = pages.first;
+            final urls = detail.pageUrls;
+            if (first >= urls.length || urls[first] == 'TC') return null;
+            final child = buildPageGroup(pages, urls, reverse, reportLoaded: false);
+            return (pageKey: (detail.chapterId, first), child: child);
+          },
+          onTap: onTap,
+          builder: (_, scrollLocked, decoratePage) => Obx(
+            () => buildHorizontal(scrollLocked, decoratePage),
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget buildHorizontal(
+      bool scrollLocked, ComicReaderPageDecorator decoratePage) {
     // 響應式讀取必須留在 Obx 的 build 期間：LayoutBuilder 的 builder 於 layout 階段
     // 才執行，屆時的 .value 讀取不會被外層 Obx 追蹤，故先在此取值再往下傳。
     var mode = controller.dualPageMode;
     var dualActive = controller.isDualPaging;
     var groups = controller.pageGroups.toList();
-    var urls = controller.detail.value.pageUrls;
+    final detail = controller.detail.value;
+    var urls = detail.pageUrls;
     var reverse = controller.direction.value == ReaderDirection.kRightToLeft;
-    var locked = controller.lockSwipe.value;
     var preload = controller.settings.eInkMode.value ? 2 : 4;
     final generation = controller.pageGeneration;
     return LayoutBuilder(
@@ -334,8 +361,7 @@ class ComicReaderPage extends GetView<ComicReaderController> {
         }
         return Obx(() => ChapterSwipeBoundary(
               key: ValueKey(generation),
-              enabled:
-                  !controller.lockSwipe.value && !controller.pageLoadding.value,
+              enabled: !scrollLocked && !controller.pageLoadding.value,
               reverse: reverse,
               canGoPrevious: controller.currentIndex.value == 0,
               canGoNext: dualActive
@@ -358,17 +384,17 @@ class ComicReaderPage extends GetView<ComicReaderController> {
                   controller.markCompletedIfVisible();
                 },
                 reverse: reverse,
-                physics: locked ? const NeverScrollableScrollPhysics() : null,
+                physics:
+                    scrollLocked ? const NeverScrollableScrollPhysics() : null,
                 itemCount: dualActive ? groups.length : urls.length,
                 preloadPagesCount: preload,
                 itemBuilder: (_, i) {
-                  if (dualActive) {
-                    if (i >= groups.length) {
-                      return const SizedBox();
-                    }
-                    return buildPageGroup(groups[i], urls, reverse);
-                  }
-                  return buildPageGroup([i], urls, reverse);
+                  if (dualActive && i >= groups.length) return const SizedBox();
+                  final pages = dualActive ? groups[i] : [i];
+                  return decoratePage(
+                    (detail.chapterId, pages.first),
+                    buildPageGroup(pages, urls, reverse),
+                  );
                 },
               ),
             ));
@@ -392,7 +418,8 @@ class ComicReaderPage extends GetView<ComicReaderController> {
   }
 
   /// 單頁或雙頁對開
-  Widget buildPageGroup(List<int> pages, List<String> urls, bool reverse) {
+  Widget buildPageGroup(List<int> pages, List<String> urls, bool reverse,
+      {bool reportLoaded = true}) {
     if (pages.isEmpty) {
       return const SizedBox();
     }
@@ -404,35 +431,26 @@ class ComicReaderPage extends GetView<ComicReaderController> {
       if (index == urls.length - 1 && urls[index] == "TC") {
         return buildViewPoints();
       }
-      return buildZoomable(buildPageImage(urls[index], index));
+      return buildPageImage(urls[index], index, reportLoaded: reportLoaded);
     }
     // 對開：右到左閱讀時，較前的一頁放在右邊
     var ordered = reverse ? pages.reversed.toList() : pages;
-    return buildZoomable(
-      Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: ordered
-            .where((p) => p < urls.length)
-            .map<Widget>((p) => Expanded(child: buildPageImage(urls[p], p)))
-            .toList(),
-      ),
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: ordered
+          .where((p) => p < urls.length)
+          .map<Widget>((p) => Expanded(
+                child: buildPageImage(urls[p], p, reportLoaded: reportLoaded),
+              ))
+          .toList(),
     );
   }
 
-  Widget buildZoomable(Widget child) {
-    return PhotoView.customChild(
-      wantKeepAlive: true,
-      initialScale: 1.0,
-      onScaleEnd: (context, detail, e) {
-        controller.lockSwipe.value = (e.scale ?? 1) > 1.0;
-      },
-      child: child,
-    );
-  }
-
-  Widget buildPageImage(String url, int page, {bool vertical = false}) {
+  Widget buildPageImage(String url, int page,
+      {bool vertical = false, bool reportLoaded = true}) {
     final generation = controller.pageGeneration;
-    void loaded() => controller.onPageImageLoaded(generation, page);
+    final loaded =
+        reportLoaded ? () => controller.onPageImageLoaded(generation, page) : null;
     return controller.detail.value.isLocal
         ? LocalImage(url,
             key: ValueKey('$generation:$page:$url'),
@@ -448,7 +466,7 @@ class ComicReaderPage extends GetView<ComicReaderController> {
           );
   }
 
-  Widget buildVertical() {
+  Widget buildVertical(bool scrollLocked) {
     return EasyRefresh(
       header: MaterialHeader2(
         triggerOffset: kScrollChapterSwitchTriggerOffset,
@@ -479,13 +497,10 @@ class ComicReaderPage extends GetView<ComicReaderController> {
         ),
       ),
       refreshOnStart: false,
-      onRefresh: () async {
-        controller.forwardChapter();
-      },
-      onLoad: () async {
-        controller.nextChapter();
-      },
+      onRefresh: scrollLocked ? null : () async => controller.forwardChapter(),
+      onLoad: scrollLocked ? null : () async => controller.nextChapter(),
       child: ScrollablePositionedList.builder(
+        physics: scrollLocked ? const NeverScrollableScrollPhysics() : null,
         itemScrollController: controller.itemScrollController,
         itemCount: controller.detail.value.pageUrls.length,
         itemPositionsListener: controller.itemPositionsListener,
