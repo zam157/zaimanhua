@@ -94,5 +94,6 @@ flutter test
 
 - 发布 CI 允许 info 级别提示，error 和 warning 会使分析失败。优先复用 `test/` 中的 fixture 和 fake。真机或在线验证记录平台、登录条件、实际操作和结果。
 - [build_release.yml](../.github/workflows/build_release.yml) 手动触发可生成测试产物，推送 `v*` tag 会执行 Release 上传。通过分析和测试后构建 `ZAI-X-android.apk`、`ZAI-X-windows-x64.zip`、`ZAI-X-ios-unsigned.ipa`。打包会尝试采用经笔数校验的 `comic-index` 分支快照，取不到有效快照时沿用仓库版本。
-- Android 正式包使用既有签名以支持覆盖安装，应用 ID 为 `com.xycz.zmhx`。签名配置由 `android/zai_key.properties` 读取，缺省时 Gradle 使用 debug 签名。CI 从 `ZAI_AI_CONFIG` 注入可选 AI 配置。iOS CI 产物未签名，TestFlight 由 macOS 上的签名上传流程处理。发版核对 `pubspec.yaml` 版本、tag、产物名称、签名与 Release digest，记录方式见 [v2.4.1 发版记录](QA-v2.4.1.md)。
+- Android fork 的应用 ID 为 `io.github.zam157.zaix`，可与上游版本同时安装，应用内更新读取 `zam157/zaimanhua` 的 GitHub Releases。Android 按应用 ID 隔离数据目录，首次安装 fork 需要重新登录。
+- 同一应用 ID 的 Android 正式包使用既有签名以支持覆盖安装。签名配置由 `android/zai_key.properties` 读取，缺省时 Gradle 使用 debug 签名。CI 从 `ZAI_AI_CONFIG` 注入可选 AI 配置。iOS CI 产物未签名，TestFlight 由 macOS 上的签名上传流程处理。发版核对 `pubspec.yaml` 版本、tag、产物名称、签名与 Release digest，记录方式见 [v2.4.1 发版记录](QA-v2.4.1.md)。
 - [comic_index.yml](../.github/workflows/comic_index.yml) 定时增量更新 `comic-index` 数据分支。[daily_signin.yml](../.github/workflows/daily_signin.yml) 是独立的可选定时签到，需显式启用，和 App 启动签到分开。[Issue 自动化](../.github/codex/README.md) 有自己的分析、补丁验证和发布流程。

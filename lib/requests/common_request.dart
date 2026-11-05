@@ -15,17 +15,20 @@ class CommonRequest {
 
   final Dio _dio;
 
-  /// 版本信息来源：本仓库的 GitHub Release
+  /// Android fork 的安装标识独立，更新也使用自己的发布仓库。
   static const String kRepo = "funkeyyou/zaimanhua";
+  static const String kAndroidRepo = "zam157/zaimanhua";
 
   Future<VersionModel> checkUpdate() async {
     return await checkUpdateGithubRelease();
   }
 
   /// 检查更新：读取仓库最新的 Release
-  Future<VersionModel> checkUpdateGithubRelease() async {
+  Future<VersionModel> checkUpdateGithubRelease({bool? android}) async {
+    final isAndroid = android ?? Platform.isAndroid;
+    final repo = isAndroid ? kAndroidRepo : kRepo;
     final sources =
-        githubSources("https://api.github.com/repos/$kRepo/releases/latest");
+        githubSources("https://api.github.com/repos/$repo/releases/latest");
     for (var i = 0; i < sources.length; i++) {
       try {
         final result = await _dio.get(
@@ -48,8 +51,8 @@ class CommonRequest {
         }
         return parseRelease(
           data,
-          android: Platform.isAndroid,
-          windows: Platform.isWindows,
+          android: isAndroid,
+          windows: !isAndroid && Platform.isWindows,
         );
       } catch (_) {
         if (i == sources.length - 1) rethrow;

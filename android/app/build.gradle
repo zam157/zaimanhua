@@ -16,7 +16,7 @@ def hasReleaseKeystore =
         keystoreProperties['keyPassword']
 
 android {
-    namespace "com.xycz.zmhx"
+    namespace "io.github.zam157.zaix"
     // permission_handler_android 14 需要編譯在 SDK 37（Android 17）上；compileSdk 向後相容
     compileSdk 37
     ndkVersion flutter.ndkVersion
@@ -37,8 +37,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.xycz.zmhx"
+        applicationId "io.github.zam157.zaix"
         // You can update the following values to match your application needs.
         // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-build-configuration.
         minSdkVersion flutter.minSdkVersion

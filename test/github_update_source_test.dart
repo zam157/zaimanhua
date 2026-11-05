@@ -56,6 +56,22 @@ class _Sources implements HttpClientAdapter {
 }
 
 void main() {
+  test('Android updates use the fork release and select its APK', () async {
+    const apk =
+        'https://github.com/zam157/zaimanhua/releases/download/v2.2.0/ZAI-X-android.apk';
+    final sources = _Sources(proxyData: {
+      ..._release,
+      'assets': [
+        {'name': 'ZAI-X-android.apk', 'browser_download_url': apk},
+      ],
+    });
+    final version = await CommonRequest(dio: Dio()..httpClientAdapter = sources)
+        .checkUpdateGithubRelease(android: true);
+    expect(sources.requests.single.uri.toString().split('?').first,
+        '${githubProxyPrefix}https://api.github.com/repos/zam157/zaimanhua/releases/latest');
+    expect(version.downloadUrl, apk);
+  });
+
   test('latest release uses the proxy without contacting the original',
       () async {
     final sources = _Sources();

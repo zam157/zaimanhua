@@ -1,4 +1,4 @@
-package com.xycz.zmhx
+package io.github.zam157.zaix
 
 import android.view.KeyEvent
 import io.flutter.embedding.android.FlutterActivity
