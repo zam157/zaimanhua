@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:zai_x/modules/comic/reader/comic_reader_pan.dart';
 
 const kComicReaderFitScale = 1.0;
 const kComicReaderDoubleTapScale = 2.5;
@@ -49,6 +50,8 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
   final _transform = TransformationController();
   final _pageTransforms = <Object, Matrix4>{};
   final _pointers = <int>{};
+  final _pan = ComicReaderPan();
+  late final ComicReaderPanMomentum _momentum;
   late final AnimationController _zoomAnimation;
   late final AnimationController _pageSlide;
   late Animation<Matrix4> _zoomTransition;
@@ -63,6 +66,7 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
   void initState() {
     super.initState();
     _transform.addListener(_updateZoomState);
+    _momentum = ComicReaderPanMomentum(this, _setPanPosition);
     _zoomAnimation = AnimationController(
       vsync: this,
       duration: kComicReaderZoomDuration,
@@ -89,6 +93,8 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
         }
       }
       _zoomAnimation.stop();
+      _pan.cancel();
+      _momentum.stop();
       _pageSlide.value = 0;
       if (layoutChanged || !widget.zoomEnabled) _scrolling = false;
       final saved = widget.zoomEnabled ? _pageTransforms[widget.pageKey] : null;
@@ -128,15 +134,38 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
   }
 
   void _onPointerDown(PointerDownEvent event) {
+    _momentum.stop();
     _pointers.add(event.pointer);
+    if (_zoomed && widget.zoomEnabled && _pointers.length == 1) {
+      _dragDelta = Offset.zero;
+      _pan.begin(event, MediaQuery.maybeGestureSettingsOf(context));
+    }
     if (widget.zoomEnabled && _pointers.length == 2 && !_pinching) {
       // Stop the scrollable from claiming a drag as soon as a second finger
       // lands, even before the scale crosses its gesture threshold.
       _zoomAnimation.stop();
+      _pan.cancel();
       _restoreAfterScroll = false;
       _pageSlide.value = 0;
       setState(() => _pinching = true);
     }
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    final delta = _pan.update(event);
+    if (delta == null) return;
+    _stopZoomAnimation();
+    _pageSlide.stop();
+    _dragDelta += delta;
+    _dragPan(delta,
+        canSlide:
+            _pageSlide.value != 0 || _dragDelta.dx.abs() > _dragDelta.dy.abs());
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    final velocity = _pan.end(event);
+    _onPointerEnd(event);
+    if (velocity != null) _finishDrag(velocity);
   }
 
   void _onPointerEnd(PointerEvent event) {
@@ -146,9 +175,7 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
     }
   }
 
-  void _onInteractionStart(ScaleStartDetails details) {
-    _dragDelta = Offset.zero;
-    _pageSlide.stop();
+  void _stopZoomAnimation() {
     if (_zoomAnimation.isAnimating) {
       setState(_zoomAnimation.stop);
     }
@@ -160,35 +187,55 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
       widget.animateZoom && !MediaQuery.disableAnimationsOf(context);
 
   void _onInteractionUpdate(ScaleUpdateDetails details) {
-    if (!_zoomed || _pinching || details.scale != 1) return;
-    final size = context.size!;
-    final delta = details.focalPointDelta;
-    final matrix = _transform.value;
-    final translation = matrix.getTranslation();
-    final travel = matrix.getMaxScaleOnAxis() - kComicReaderFitScale;
-    _dragDelta += delta;
-
-    // Use each movement to pan the image first. Only movement past its
-    // edge slides the page, so reversing the drag closes the gap first.
-    final proposed = Offset(translation.x, translation.y) +
-        Offset(_pageSlide.value, 0) +
-        delta;
-    final pan = Offset(
-      proposed.dx.clamp(-size.width * travel, 0),
-      proposed.dy.clamp(-size.height * travel, 0),
-    );
-    _transform.value = matrix.clone()..setTranslationRaw(pan.dx, pan.dy, 0);
-    final pageDrag = details.pointerCount == 1 &&
-        (_pageSlide.value != 0 || _dragDelta.dx.abs() > _dragDelta.dy.abs());
-    _pageSlide.value =
-        pageDrag ? (proposed.dx - pan.dx).clamp(-size.width, size.width) : 0;
+    // Pointer drags are handled from the first movement. The viewer still
+    // handles pinches and supplies trackpad deltas without a down event.
+    if (_zoomed && _pointers.isEmpty && details.scale == 1) {
+      _dragPan(details.focalPointDelta, canSlide: false);
+    }
   }
 
-  void _onInteractionEnd(ScaleEndDetails details) {
+  Offset get _panPosition {
+    final position = _transform.value.getTranslation();
+    return Offset(position.x, position.y);
+  }
+
+  Offset _minimumPan(Size size) {
+    final travel = kComicReaderFitScale - _transform.value.getMaxScaleOnAxis();
+    return Offset(size.width * travel, size.height * travel);
+  }
+
+  void _setPanPosition(Offset position) {
+    if (position == _panPosition) return;
+    _transform.value = _transform.value.clone()
+      ..setTranslationRaw(position.dx, position.dy, 0);
+  }
+
+  void _dragPan(Offset delta, {required bool canSlide}) {
+    final size = context.size!;
+    final minimum = _minimumPan(size);
+    // Use each movement to pan the image first. Only movement past its
+    // edge slides the page, so reversing the drag closes the gap first.
+    final proposed = _panPosition + Offset(_pageSlide.value, 0) + delta;
+    final pan = Offset(
+      proposed.dx.clamp(minimum.dx, 0),
+      proposed.dy.clamp(minimum.dy, 0),
+    );
+    _setPanPosition(pan);
+    final slide =
+        canSlide ? (proposed.dx - pan.dx).clamp(-size.width, size.width) : 0.0;
+    if (slide != _pageSlide.value) _pageSlide.value = slide;
+  }
+
+  void _finishDrag(Offset velocity) {
     final offset = _pageSlide.value;
-    if (offset == 0 || details.pointerCount != 0) return;
+    if (offset == 0) {
+      if (_animate && _zoomed) {
+        _momentum.fling(_panPosition, velocity, _minimumPan(context.size!));
+      }
+      return;
+    }
     final extent = context.size!.width;
-    final speed = details.velocity.pixelsPerSecond.dx;
+    final speed = velocity.dx;
     final fling = speed.sign == offset.sign && speed.abs() >= 450;
     final turn = _isNext(offset) ? widget.onNextPage : widget.onPreviousPage;
     if (turn == null ||
@@ -246,67 +293,67 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
 
   Widget _withPageSlide(Widget child) {
     return LayoutBuilder(
-      builder: (_, constraints) => ValueListenableBuilder<double>(
-        valueListenable: _pageSlide,
-        child: child,
-        builder: (_, offset, child) {
-          final extent = constraints.maxWidth;
-          final preview =
-              offset == 0 ? null : widget.previewBuilder?.call(_isNext(offset));
-          return ClipRect(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Transform.translate(
-                  offset: Offset(offset, 0),
-                  transformHitTests: false,
-                  child: child!,
-                ),
-                if (preview != null)
-                  IgnorePointer(
-                    child: Transform.translate(
-                      offset: Offset(offset - offset.sign * extent, 0),
-                      child: ClipRect(
-                        child: Transform(
-                          transform: _pageTransforms[preview.pageKey] ??
-                              Matrix4.identity(),
-                          child: preview.child,
+      builder: (_, constraints) {
+        final previews = <bool, ({Object pageKey, Widget child})?>{};
+        return ValueListenableBuilder<double>(
+          valueListenable: _pageSlide,
+          child: child,
+          builder: (_, offset, child) {
+            final extent = constraints.maxWidth;
+            final next = _isNext(offset);
+            final preview = offset == 0
+                ? null
+                : previews.putIfAbsent(
+                    next, () => widget.previewBuilder?.call(next));
+            return ClipRect(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Transform.translate(
+                    offset: Offset(offset, 0),
+                    transformHitTests: false,
+                    child: child!,
+                  ),
+                  if (preview != null)
+                    IgnorePointer(
+                      child: Transform.translate(
+                        offset: Offset(offset - offset.sign * extent, 0),
+                        child: ClipRect(
+                          child: Transform(
+                            transform: _pageTransforms[preview.pageKey] ??
+                                Matrix4.identity(),
+                            child: preview.child,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _decoratePage(Object pageKey, Widget child) {
-    return ValueListenableBuilder<Matrix4>(
-      valueListenable: _transform,
-      child: child,
-      builder: (_, matrix, child) {
-        // The pager is at fit scale during a normal swipe. Paint each visible
-        // page at its saved zoom until the viewport takes over after settling.
-        final useSavedTransform =
-            matrix.getMaxScaleOnAxis() <= kComicReaderFitScale + 1e-6 &&
-                (pageKey != widget.pageKey || _restoreAfterScroll);
-        return ClipRect(
-          child: Transform(
-            transform: (useSavedTransform ? _pageTransforms[pageKey] : null) ??
-                Matrix4.identity(),
-            alignment: Alignment.topLeft,
-            child: child,
-          ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
   }
 
+  Widget _decoratePage(Object pageKey, Widget child) {
+    // The pager is at fit scale during a normal swipe. Paint each visible
+    // page at its saved zoom until the viewport takes over after settling.
+    final saved = !_zoomed && (pageKey != widget.pageKey || _restoreAfterScroll)
+        ? _pageTransforms[pageKey]
+        : null;
+    return ClipRect(
+      child: Transform(
+        transform: saved ?? Matrix4.identity(),
+        alignment: Alignment.topLeft,
+        child: child,
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _momentum.dispose();
     _pageSlide.dispose();
     _zoomAnimation.dispose();
     _transform.dispose();
@@ -318,8 +365,10 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
     return SizedBox.expand(
       child: Listener(
         onPointerDown: _onPointerDown,
-        onPointerUp: _onPointerEnd,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
         onPointerCancel: (event) {
+          _pan.cancel();
           _pageSlide.value = 0;
           _onPointerEnd(event);
         },
@@ -338,9 +387,8 @@ class _ComicReaderViewportState extends State<ComicReaderViewport>
             minScale: kComicReaderFitScale,
             maxScale: kComicReaderMaxScale,
             panEnabled: false,
-            onInteractionStart: _onInteractionStart,
+            onInteractionStart: (_) => _stopZoomAnimation(),
             onInteractionUpdate: _onInteractionUpdate,
-            onInteractionEnd: _onInteractionEnd,
             // Keep mouse-wheel events with the scrollable at fit scale.
             scaleEnabled: widget.zoomEnabled && _pinching,
             child: NotificationListener<ScrollNotification>(

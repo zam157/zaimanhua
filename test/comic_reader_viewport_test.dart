@@ -110,6 +110,52 @@ void main() {
     expect(transform.value.isIdentity(), isTrue);
   });
 
+  testWidgets('zoomed drag keeps its first delta and flings within the image',
+      (tester) async {
+    var pageTurns = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: ComicReaderViewport(
+        zoomEnabled: true,
+        resetToken: 1,
+        pageKey: 0,
+        onTap: (_) {},
+        onPreviousPage: () => pageTurns++,
+        onNextPage: () => pageTurns++,
+        builder: (_, locked, decoratePage) =>
+            const ColoredBox(color: Colors.black),
+      ),
+    ));
+
+    const center = Offset(400, 300);
+    await _doubleTap(tester, center);
+    final transform = _transform(tester);
+    double x() => transform.value.getTranslation().x;
+    final start = x();
+    final drag = await tester.startGesture(center);
+    await drag.moveBy(const Offset(-24, 0),
+        timeStamp: const Duration(milliseconds: 16));
+    await tester.pump();
+    expect(x(), start - 24);
+    await drag.moveBy(const Offset(-28, 0),
+        timeStamp: const Duration(milliseconds: 32));
+    final release = x();
+    await drag.up(timeStamp: const Duration(milliseconds: 33));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 70));
+    expect(x(), lessThan(release));
+
+    final stopped = x();
+    final grab = await tester.startGesture(center);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(x(), stopped);
+    await grab.cancel();
+
+    await tester.flingFrom(center, const Offset(-240, 0), 3500);
+    await tester.pumpAndSettle();
+    expect(x(), closeTo(-1200, 1e-6));
+    expect(pageTurns, 0);
+  });
+
   for (final reverse in [false, true]) {
     testWidgets(
         'edge drag follows the finger and restores zoom (RTL: $reverse)',
@@ -295,11 +341,29 @@ void main() {
     await tester.pumpAndSettle();
 
     final y = position().pixels;
-    final x = tester.getTopLeft(strip).dx;
-    await tester.dragFrom(const Offset(400, 300), const Offset(-150, 0));
+    double x() => tester.getTopLeft(strip).dx;
+    final beforePan = x();
+    final pan = await tester.startGesture(const Offset(400, 300));
+    await pan.moveBy(const Offset(-24, 0),
+        timeStamp: const Duration(milliseconds: 16));
+    await tester.pump();
+    expect(x(), closeTo(beforePan - 24, 1e-6));
+    await pan.moveBy(const Offset(-28, 0),
+        timeStamp: const Duration(milliseconds: 32));
+    await tester.pump();
+    final panRelease = x();
+    await pan.up(timeStamp: const Duration(milliseconds: 33));
     await tester.pumpAndSettle();
     expect(position().pixels, y);
-    expect(tester.getTopLeft(strip).dx, lessThan(x));
+    expect(x(), lessThan(panRelease));
+
+    await tester.flingFrom(const Offset(400, 500), const Offset(0, -140), 800);
+    await tester.pump();
+    final scrollRelease = position().pixels;
+    await tester.pump(const Duration(milliseconds: 70));
+    expect(position().pixels, greaterThan(scrollRelease));
+    await tester.pumpAndSettle();
+    expect(scale(), 2.5);
     expect(chapterTurns, 0);
 
     await _doubleTap(tester, focal);

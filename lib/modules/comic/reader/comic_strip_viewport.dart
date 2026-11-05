@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:zai_x/modules/comic/reader/comic_reader_pan.dart';
 import 'package:zai_x/modules/comic/reader/comic_reader_viewport.dart';
 
 /// Zooms one continuous strip while the list handles vertical scrolling.
@@ -23,9 +24,11 @@ class ComicStripViewport extends StatefulWidget {
 }
 
 class _ComicStripViewportState extends State<ComicStripViewport>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _transform = TransformationController();
   final _pointers = <int>{};
+  final _pan = ComicReaderPan(horizontalOnly: true);
+  late final ComicReaderPanMomentum _momentum;
   late final AnimationController _animation;
   late Animation<Matrix4> _transition;
   ScrollableState? _scrollable;
@@ -38,10 +41,15 @@ class _ComicStripViewportState extends State<ComicStripViewport>
 
   double get _scale => _transform.value.getMaxScaleOnAxis();
   double get _x => _transform.value.getTranslation().x;
+  double get _minimumX => context.size!.width * (1 - _scale);
+  bool get _animate =>
+      widget.animateZoom && !MediaQuery.disableAnimationsOf(context);
 
   @override
   void initState() {
     super.initState();
+    _momentum = ComicReaderPanMomentum(
+        this, (position) => _setHorizontalPan(position.dx));
     _animation =
         AnimationController(vsync: this, duration: kComicReaderZoomDuration)
           ..addListener(() {
@@ -59,7 +67,11 @@ class _ComicStripViewportState extends State<ComicStripViewport>
   @override
   void didUpdateWidget(covariant ComicStripViewport oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.zoomEnabled) _animation.stop();
+    if (!widget.zoomEnabled) {
+      _animation.stop();
+      _pan.cancel();
+      _momentum.stop();
+    }
   }
 
   bool _rememberScrollable(ScrollMetricsNotification notification) {
@@ -97,13 +109,41 @@ class _ComicStripViewportState extends State<ComicStripViewport>
   }
 
   void _onPointerDown(PointerDownEvent event) {
+    _momentum.stop();
     _pointers.add(event.pointer);
+    if (widget.zoomEnabled &&
+        _scale > kComicReaderFitScale &&
+        _pointers.length == 1) {
+      _pan.begin(event, MediaQuery.maybeGestureSettingsOf(context));
+    }
     if (_animation.isAnimating ||
         (widget.zoomEnabled && _pointers.length == 2)) {
       setState(() {
         _animation.stop();
         _pinching = widget.zoomEnabled && _pointers.length >= 2;
+        if (_pinching) _pan.cancel();
       });
+    }
+  }
+
+  void _setHorizontalPan(double x) {
+    final clamped = x.clamp(_minimumX, 0).toDouble();
+    if (clamped == _x) return;
+    _transform.value = _transform.value.clone()
+      ..setTranslationRaw(clamped, 0, 0);
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    final delta = _pan.update(event);
+    if (delta != null) _setHorizontalPan(_x + delta.dx);
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    final velocity = _pan.end(event);
+    _onPointerEnd(event);
+    if (velocity != null && _animate) {
+      _momentum.fling(
+          Offset(_x, 0), Offset(velocity.dx, 0), Offset(_minimumX, 0));
     }
   }
 
@@ -124,8 +164,8 @@ class _ComicStripViewportState extends State<ComicStripViewport>
       final scale = (_startScale * details.scale)
           .clamp(kComicReaderFitScale, kComicReaderMaxScale);
       _applyZoom(scale, focal.dx - _sceneX * scale, _lastFocal.dy, focal.dy);
-    } else if (!_pinching && _scale > kComicReaderFitScale) {
-      _applyZoom(_scale, _x + details.focalPointDelta.dx, 0, 0);
+    } else if (_pointers.isEmpty && _scale > kComicReaderFitScale) {
+      _setHorizontalPan(_x + details.focalPointDelta.dx);
     }
     _lastFocal = focal;
   }
@@ -136,7 +176,7 @@ class _ComicStripViewportState extends State<ComicStripViewport>
         : kComicReaderDoubleTapScale;
     final x = _doubleTapPosition.dx * (1 - scale);
     final y = _doubleTapPosition.dy;
-    if (!widget.animateZoom || MediaQuery.disableAnimationsOf(context)) {
+    if (!_animate) {
       _applyZoom(scale, x, y, y);
       return;
     }
@@ -152,6 +192,7 @@ class _ComicStripViewportState extends State<ComicStripViewport>
 
   @override
   void dispose() {
+    _momentum.dispose();
     _animation.dispose();
     _transform.dispose();
     super.dispose();
@@ -163,8 +204,12 @@ class _ComicStripViewportState extends State<ComicStripViewport>
     return SizedBox.expand(
       child: Listener(
         onPointerDown: _onPointerDown,
-        onPointerUp: _onPointerEnd,
-        onPointerCancel: _onPointerEnd,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        onPointerCancel: (event) {
+          _pan.cancel();
+          _onPointerEnd(event);
+        },
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (details) {
@@ -184,8 +229,18 @@ class _ComicStripViewportState extends State<ComicStripViewport>
                 valueListenable: _transform,
                 child: NotificationListener<ScrollMetricsNotification>(
                   onNotification: _rememberScrollable,
-                  child: widget.builder(
-                      context, _pinching || _animation.isAnimating),
+                  child: NotificationListener<ScrollStartNotification>(
+                    onNotification: (notification) {
+                      if (notification.depth == 0 &&
+                          notification.dragDetails != null) {
+                        _pan.cancel();
+                        _momentum.stop();
+                      }
+                      return false;
+                    },
+                    child: widget.builder(
+                        context, _pinching || _animation.isAnimating),
+                  ),
                 ),
                 builder: (_, matrix, child) {
                   // Use the height that is actually visible after scaling.
